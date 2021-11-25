@@ -2,7 +2,7 @@ const AWS = require('aws-sdk'); //Connection client to database
 const express = require('express'); //Routing Service
 const cluster = require('cluster'); //Enable concurrency
 const os = require('os'); //To gain access to the core count
-const app = express();
+const app = express(); //Start the express app
 const bcrypt = require('bcrypt'); //Encryption
 const validator = require("email-validator"); //Check for email
 const nodemailer = require("nodemailer");
@@ -18,18 +18,31 @@ AWS.config.update({
 
 const dynamoClient = new AWS.DynamoDB.DocumentClient;
 const USER_TABLE = "users";
+const TOKEN_TABLE = "tokens";
 
-//Function to delete users
+/**
+ * The deleteUser(name) function is an asyncronous function which will remove
+ * users from the user table hosted on AWS Dynamo
+ * @param name username value for the account
+ * @returns user table
+ */
 const deleteUser = async (name) => {
     const params = {
         TableName: USER_TABLE,
         Key:{
-            username: name
+            email: name
         }
     };
     const users = await dynamoClient.delete(params).promise();
     return users;
 }
+
+/**
+ * The getUsers() function is an asyncronus function which will return the 
+ * entrity of the user table hosted on AWS Dynamo
+ * 
+ * @returns the enrity of the users table
+ */
 const getUsers = async ()=> {
     const params = {
         TableName: USER_TABLE,
@@ -38,7 +51,12 @@ const getUsers = async ()=> {
     return users;
 }
 
-//Function to find user
+/**
+ * The getUser(name) function is an asyncronus function which will return
+ * the user infirmation which matched the username
+ * @param name is the username value which you are trying to search
+ * @returns the search results of the dynamo search
+ */
 const getUser = async (name)=> {
     const params = {
         TableName: USER_TABLE,
@@ -53,10 +71,60 @@ const getUser = async (name)=> {
     const users = await dynamoClient.query(params).promise();
     return users;
 }
+
+/**
+ * The getToken(token) function will search and return the token within the tokens
+ * table. This is a table which is hosted on AWS Dynamo and holds the refresh tokens.
+ * @param token is the value of which you want to check existed in the token
+ * table 
+ * @returns the token which is in the database
+ */
+const getToken = async (token) => {
+    const params = {
+        TableName: TOKEN_TABLE,
+        KeyConditionExpression: "#un = :n",
+        ExpressionAttributeNames:{
+            "#un": "token"
+        },
+        ExpressionAttributeValues: {
+           ":n": token
+        }
+    };
+    const dbToken = await dynamoClient.query(params).promise();
+    return dbToken;
+}
+
+/**
+ * The addToke(token) function is a asyncronous function which adds the refresh token
+ * to the tokens table. 
+ * @param token is the value of the refresh token you are adding to the table 
+ * @returns a table of all the tokens
+ */
+const addToken = async (token) => {
+    const params = {
+        TableName: TOKEN_TABLE,
+        Item: {
+            "token": token
+        }
+    };
+    return await dynamoClient.put(params).promise();
+}
+
+//Function to remove token from table
+const removeToken = async (tokenVal) => {
+    const params = {
+        TableName: TOKEN_TABLE,
+        Key:{
+            token: tokenVal
+        }
+    };
+    const users = await dynamoClient.delete(params).promise();
+    return users;
+}
 //Validate user
 const validateUser = async (token) => {
-    const username = jwt.verify(token, process.env.EMAIL_SECRET).user;
-    user = await getUser(username)
+    const userVal = jwt.verify(token, process.env.EMAIL_SECRET).user;
+    let user = await getUser(userVal)
     user = user.Items[0]
     user.verfication = true
     const params = {
@@ -68,13 +136,15 @@ const validateUser = async (token) => {
 }
 
 //Function to add user
-const addUser = async (username, password) => {
+const addUser = async (username, password, email) => {
     const params = {
         TableName: USER_TABLE,
         Item: {
+            "email": email,
             "username": username,
             "password": password,
-            "verfication": false
+            "verfication": false,
+            "logs": []
         }
     };
     return await dynamoClient.put(params).promise();
@@ -116,6 +186,7 @@ app.get('/confirm/:token', async (req, res) => {
 //Create an end point register users
 app.post('/register', async (req, res) => {
     //get user information from the request
+    const email = req.body.email;
     const username = req.body.username;
     const password = req.body.password;
 
@@ -131,7 +202,7 @@ app.post('/register', async (req, res) => {
 
     //Create the user
     try {
-        await addUser(username, hashPass);
+        await addUser(username, hashPass, email);
     }   catch (err){
         console.log(err)
         return res.status(400).json(err)
@@ -141,23 +212,19 @@ app.post('/register', async (req, res) => {
     const data = { user: username };
     const emailToken = generateEmailToken(data);
 
-    console.log('generated token');
-
     const url = `http://localhost:${process.env.AUTH_PORT}/confirm/${emailToken}`
 
-    console.log('generated url');
-
     transporter.sendMail({
-        to: username,
+        to: email,
         subject: 'Confirm Email',
         html: `Please click this email to confirm your email: <a href="${url}">${url}</a>`,
     });
-    res.sendStatus(200)
+    return res.status(200).json({email: email})
 })
 
 app.delete("/delete", (req, res) => {
-    deleteUser("casciano.david@gmail.com")
-    return res.send(200)
+    deleteUser(req.body.email)
+    return res.sendStatus(200)
 })
 
 app.post('/login', async (req, res) => {
@@ -171,9 +238,9 @@ app.post('/login', async (req, res) => {
         if (await(bcrypt.compare(req.body.password, user.Items[0].password))) {
             const resUser = user.Items[0].username;
             const accessToken = generateAccessToken(resUser);
-            console.log(accessToken)
             const refreshToken = jwt.sign(resUser, process.env.REFRESH_TOKEN_SECRET)
-            return res.status(200).json({ accessToken: accessToken, refreshToken: refreshToken });
+            await addToken(refreshToken);
+            return res.status(200).json({ accessToken: accessToken, refreshToken: refreshToken});
         } else {
             return res.status(405).send('Not Allowed')
         } 
@@ -182,15 +249,15 @@ app.post('/login', async (req, res) => {
     }
 })
 
-app.post('/token', (req, res) => {
-
-    console.log("running");
+app.post('/token', async (req, res) => {
     //Get refresh token from the body of the request
     const refreshToken = req.body.token;
     if (refreshToken == null) {
         return res.sendStatus(401);
     }
-    if (!refreshTokens.includes(refreshToken)) {
+
+    const dbToken = await getToken(refreshToken);
+    if(dbToken.Count == 0) {
         return res.sendStatus(403);
     }
 
@@ -205,13 +272,14 @@ app.post('/token', (req, res) => {
     })
 })
 
-app.delete('/logout', (req, res) => {
-    refreshTokens = refreshTokens.filter(token => token !== req.body.token);
+app.delete('/logout', async (req, res) => {
+    const token = req.body.token;
+    await removeToken(token)
     res.sendStatus(204);
 })
 
 function generateAccessToken(user) {
-    return jwt.sign({user}, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '15s' });
+    return jwt.sign({user}, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '30s' });
 }
 
 function generateEmailToken(data) {
