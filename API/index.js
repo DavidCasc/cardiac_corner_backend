@@ -45,8 +45,8 @@ if (process.env.API_MAX_CORES == true) {
 app.use(express.json());
 
 //Get logs
-app.get('/fetchLogs', async (req, res) => {
-    var dbUser = await getUser(req.body.username);
+app.get('/fetchLogs/:user', async (req, res) => {
+    var dbUser = await getUser(req.params.user);
     dbUser = dbUser.Items[0];
     return res.status(200).json({logs: dbUser.logs})
 })
@@ -62,17 +62,36 @@ app.post("/addLog", async (req, res) => {
         Item: dbUser
     };
     await dynamoClient.put(params).promise();
+    return res.send({log: req.body.log}).status(200);
+})
+
+//Clear all logs
+app.delete('/deleteAll/:user', async (req,res) => {
+    console.log(req.params.user);
+    var dbUser = await getUser(req.params.user);
+    console.log(dbUser)
+    dbUser = dbUser.Items[0];
+    console.log(dbUser);
+    dbUser.logs = [];
+    const params = {
+        TableName: USER_TABLE,
+        Item: dbUser
+    };
+
+    console.log(params);
+    await dynamoClient.put(params).promise();
     return res.sendStatus(200);
 })
 
 //Delete log
-app.delete("/deleteLog", async (req, res) => {
-    const newLog = req.body.log;
-    var dbUser = await getUser(req.body.username);
+app.delete("/deleteLog/:user/:date", async (req, res) => {
+    const date = req.params.date;
+    const user = req.params.user;
+    var dbUser = await getUser(user);
     dbUser = dbUser.Items[0];
     let index = -1
     for(var i = 0; i < dbUser.logs.length; i++){
-        if(dbUser.logs[i].time_created === newLog.time_created){
+        if(dbUser.logs[i].time_created === date){
             index = i;
             break;
         }
@@ -85,7 +104,7 @@ app.delete("/deleteLog", async (req, res) => {
         Item: dbUser
     };
     await dynamoClient.put(params).promise();
-    return res.sendStatus(200);
+    return res.send({index: index}).status(200);
 })
 
 function authenticateToken(req, res, next) {
@@ -102,6 +121,8 @@ function authenticateToken(req, res, next) {
         next()
     })
 }
+
+
 
 if (cluster.isMaster) {
     for (let i = 0; i < numCore; i++) {

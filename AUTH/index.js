@@ -237,10 +237,11 @@ app.post('/login', async (req, res) => {
     try{
         if (await(bcrypt.compare(req.body.password, user.Items[0].password))) {
             const resUser = user.Items[0].username;
+            const resEmail = user.Items[0].email
             const accessToken = generateAccessToken(resUser);
             const refreshToken = jwt.sign(resUser, process.env.REFRESH_TOKEN_SECRET)
             await addToken(refreshToken);
-            return res.status(200).json({ accessToken: accessToken, refreshToken: refreshToken});
+            return res.status(200).json({ email: resEmail, accessToken: accessToken, refreshToken: refreshToken});
         } else {
             return res.status(405).send('Not Allowed')
         } 
@@ -272,10 +273,10 @@ app.post('/token', async (req, res) => {
     })
 })
 
-app.delete('/logout', async (req, res) => {
-    const token = req.body.token;
+app.delete('/logout/:token', async (req, res) => {
+    const token = req.params.token;
     await removeToken(token)
-    res.sendStatus(204);
+    res.status(200).json({token: token});
 })
 
 function generateAccessToken(user) {
