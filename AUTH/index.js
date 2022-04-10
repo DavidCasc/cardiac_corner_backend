@@ -221,27 +221,32 @@ app.post('/register', async (req, res) => {
     });
     return res.status(200).json({email: email})
 })
-
+//Create endpoint to delete user
 app.delete("/delete", (req, res) => {
+    //delete user by email
     deleteUser(req.body.email)
     return res.sendStatus(200)
 })
 
+//Login endpoint
 app.post('/login', async (req, res) => {
     //Authenticate user
     const username = req.body.username;
     const user = await getUser(username)
+
+    //Check if the user is in the database
     if (user.Count == 0) {
         return res.status(400).send('Cannot find user')
     }
     try{
+        //encrypt the given password from the request
         if (await(bcrypt.compare(req.body.password, user.Items[0].password))) {
-            const resUser = user.Items[0].username;
+            const resUser = user.Items[0].username; //get details from db
             const resEmail = user.Items[0].email
             const accessToken = generateAccessToken(resUser);
             const refreshToken = jwt.sign(resUser, process.env.REFRESH_TOKEN_SECRET)
             await addToken(refreshToken);
-            return res.status(200).json({ email: resEmail, accessToken: accessToken, refreshToken: refreshToken});
+            return res.status(200).json({ email: resEmail, accessToken: accessToken, refreshToken: refreshToken}); //send back refresh token
         } else {
             return res.status(405).send('Not Allowed')
         } 
@@ -250,6 +255,7 @@ app.post('/login', async (req, res) => {
     }
 })
 
+//Create an endpoint to provide access tokens
 app.post('/token', async (req, res) => {
     //Get refresh token from the body of the request
     const refreshToken = req.body.token;
@@ -257,6 +263,7 @@ app.post('/token', async (req, res) => {
         return res.sendStatus(401);
     }
 
+    //chech if the tokent is still in the database
     const dbToken = await getToken(refreshToken);
     if(dbToken.Count == 0) {
         return res.sendStatus(403);
@@ -273,6 +280,7 @@ app.post('/token', async (req, res) => {
     })
 })
 
+//Create function for future logouts to delete token from database
 app.delete('/logout/:token', async (req, res) => {
     const token = req.params.token;
     await removeToken(token)
@@ -287,11 +295,13 @@ function generateEmailToken(data) {
     return jwt.sign(data, process.env.EMAIL_SECRET, { expiresIn: '1y' });
 }
 
+//Multithreading loop
 if (cluster.isMaster) {
+    //fork if master/main
     for (let i = 0; i < numCore; i++) {
         cluster.fork();
     }
-
+    //monitor child processes
     cluster.on("exit", (worker, code, signal) => {
         console.log("#####################################");
         console.log(`worker ${worker.process.pid} died`);
@@ -301,6 +311,7 @@ if (cluster.isMaster) {
         cluster.fork();
     });
 } else {
+    //If child process run script
     app.listen(process.env.AUTH_PORT, () =>
         console.log(`Process ${process.pid} on port ${process.env.AUTH_PORT}`)
     );

@@ -19,7 +19,9 @@ AWS.config.update({
 const dynamoClient = new AWS.DynamoDB.DocumentClient;
 const USER_TABLE = "users";
 
+//Create a helper function to get user from dynamodb
 const getUser = async (name)=> {
+    //Create parameters
     const params = {
         TableName: USER_TABLE,
         KeyConditionExpression: "#un = :n",
@@ -30,12 +32,14 @@ const getUser = async (name)=> {
            ":n": name
         }
     };
+    //call to dynamodb
     const users = await dynamoClient.query(params).promise();
     return users;
 }
 
 var numCore;
 
+//get number of cores from os
 if (process.env.API_MAX_CORES == true) {
     numCore = os.cpus().length;
 } else {
@@ -53,31 +57,40 @@ app.get('/fetchLogs/:user', async (req, res) => {
 
 //Put log
 app.post("/addLog", async (req, res) => {
+    //get username from request body
     const newLog = req.body.log;
+
+    //get user from db
     var dbUser = await getUser(req.body.username);
     dbUser = dbUser.Items[0];
+    //add new log
     dbUser.logs.push(newLog);
+    //create new parameters
     const params = {
         TableName: USER_TABLE,
         Item: dbUser
     };
+    //push to db
     await dynamoClient.put(params).promise();
     return res.send({log: req.body.log}).status(200);
 })
 
 //Clear all logs
 app.delete('/deleteAll/:user', async (req,res) => {
+    //get user from paremeters
     console.log(req.params.user);
     var dbUser = await getUser(req.params.user);
     console.log(dbUser)
     dbUser = dbUser.Items[0];
     console.log(dbUser);
+    //cleare db logs
     dbUser.logs = [];
     const params = {
         TableName: USER_TABLE,
         Item: dbUser
     };
 
+    //push to db
     console.log(params);
     await dynamoClient.put(params).promise();
     return res.sendStatus(200);
@@ -85,11 +98,14 @@ app.delete('/deleteAll/:user', async (req,res) => {
 
 //Delete log
 app.delete("/deleteLog/:user/:date", async (req, res) => {
+    //get paremeters from endpoints
     const date = req.params.date;
     const user = req.params.user;
+    //get user from db
     var dbUser = await getUser(user);
     dbUser = dbUser.Items[0];
     let index = -1
+    //iterate through the users logs to find logs
     for(var i = 0; i < dbUser.logs.length; i++){
         if(dbUser.logs[i].time_created === date){
             index = i;
@@ -99,6 +115,7 @@ app.delete("/deleteLog/:user/:date", async (req, res) => {
     if(index > -1){
         dbUser.logs.splice(index,1)
     }
+    //delete and push
     const params = {
         TableName: USER_TABLE,
         Item: dbUser
@@ -123,12 +140,13 @@ function authenticateToken(req, res, next) {
 }
 
 
-
+//Multithreading loop
 if (cluster.isMaster) {
+    //fork if master
     for (let i = 0; i < numCore; i++) {
         cluster.fork();
     }
-
+    //monitor child processes
     cluster.on("exit", (worker, code, signal) => {
         console.log("#####################################");
         console.log(`worker ${worker.process.pid} died`);
@@ -138,6 +156,7 @@ if (cluster.isMaster) {
         cluster.fork();
     });
 } else {
+    //Preform app if child process
     app.listen(process.env.API_PORT, () =>
         console.log(`Process ${process.pid} listening on port ${process.env.API_PORT}`)
     );
